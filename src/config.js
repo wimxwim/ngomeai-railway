@@ -16,11 +16,21 @@ if (process.env.NODE_ENV !== "test") {
   const adminPwd    = process.env.ADMIN_PASSWORD    || "";
   const adminSecret = process.env.ADMIN_JWT_SECRET  || "";
   // ADMIN_PASSWORD wajib ada dan minimal 8 karakter — cegah brute force
-  if (!adminPwd || adminPwd.length < 8) {
+  if (!adminPwd) {
+    console.error("ERROR: ADMIN_PASSWORD not set in environment variables");
+    throw new Error("ADMIN_PASSWORD wajib diisi dan minimal 8 karakter (set di .env)");
+  }
+  if (adminPwd.length < 8) {
+    console.error(`ERROR: ADMIN_PASSWORD too short: ${adminPwd.length} chars (need 8+)`);
     throw new Error("ADMIN_PASSWORD wajib diisi dan minimal 8 karakter (set di .env)");
   }
   // ADMIN_JWT_SECRET wajib ada dan minimal 32 karakter — cegah brute force signature JWT
-  if (!adminSecret || adminSecret.length < 32) {
+  if (!adminSecret) {
+    console.error("ERROR: ADMIN_JWT_SECRET not set in environment variables");
+    throw new Error("ADMIN_JWT_SECRET wajib diisi dan minimal 32 karakter (set di .env)");
+  }
+  if (adminSecret.length < 32) {
+    console.error(`ERROR: ADMIN_JWT_SECRET too short: ${adminSecret.length} chars (need 32+)`);
     throw new Error("ADMIN_JWT_SECRET wajib diisi dan minimal 32 karakter (set di .env)");
   }
 }
