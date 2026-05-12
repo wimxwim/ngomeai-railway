@@ -1,7 +1,12 @@
+console.log("=== STARTUP: Loading config and app ===");
 const { app }    = require("./app");
+console.log("=== STARTUP: App loaded ===");
 const config     = require("./config");
+console.log("=== STARTUP: Config loaded ===");
 const { pool }   = require("./db");
+console.log("=== STARTUP: DB pool created ===");
 const logger     = require("./utils/logger");
+console.log("=== STARTUP: Logger initialized ===");
 const { runBenchmark }             = require("./workers/modelBenchmark");
 const { invalidateCache }          = require("./ai/modelSelector");
 const { startPolling, stopPolling } = require("./bots/telegram");
