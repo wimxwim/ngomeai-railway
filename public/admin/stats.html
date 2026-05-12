@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Statistik — NgomeAI Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/css/style.css">
+  <style>
+    .keyword-bar { display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid #f1f3f9 }
+    .keyword-bar:last-child { border-bottom:none }
+    .keyword-word { font-weight:600; font-size:14px; min-width:120px; color:#1a1d23 }
+    .keyword-track { flex:1; height:8px; background:#f1f3f9; border-radius:4px; overflow:hidden }
+    .keyword-fill { height:100%; background:linear-gradient(90deg,#2563eb,#7c3aed); border-radius:4px; transition:width .4s }
+    .keyword-count { font-size:12px; color:#6b7280; min-width:40px; text-align:right }
+    .phone-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #f1f3f9 }
+    .phone-row:last-child { border-bottom:none }
+    .phone-rank { font-size:11px; font-weight:700; color:#fff; background:#2563eb; border-radius:50%;
+                  width:22px; height:22px; display:flex; align-items:center; justify-content:center; flex-shrink:0 }
+    .phone-info { flex:1; overflow:hidden }
+    .phone-name { font-size:13px; font-weight:600; color:#1a1d23; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+    .phone-num  { font-size:11px; color:#6b7280 }
+    .phone-count { font-size:13px; font-weight:700; color:#7c3aed }
+    .cache-note { font-size:11px; color:#9ca3af; margin-top:6px }
+    .stat-grid-4 { display:grid; grid-template-columns:repeat(4,1fr); gap:16px }
+    @media(max-width:768px){ .stat-grid-4 { grid-template-columns:repeat(2,1fr) } }
+  </style>
+</head>
+<body>
+<script src="/admin/js/auth.js"></script>
+<script src="/admin/js/api.js"></script>
+<script src="/admin/js/app.js"></script>
+<script>
+auth.requireAuth();
+
+function defaultDates() {
+  const to   = new Date().toISOString().slice(0,10);
+  const from = new Date(Date.now() - 29*86400000).toISOString().slice(0,10);
+  return { from, to };
+}
+
+async function init() {
+  const { from, to } = defaultDates();
+  renderLayout('Statistik', `
+    <div class="card mb-6">
+      <div class="flex gap-4 items-end flex-wrap">
+        <div class="form-group" style="margin:0;min-width:200px">
+          <label>Klien</label>
+          <select id="clientSelect" style="min-width:200px">
+            <option value="">— Pilih Klien —</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Dari</label>
+          <input type="date" id="fromDate" value="${from}" style="width:160px">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Sampai</label>
+          <input type="date" id="toDate" value="${to}" style="width:160px">
+        </div>
+        <button onclick="loadStats()" class="btn btn-primary" style="margin-bottom:0">Tampilkan</button>
+      </div>
+    </div>
+
+    <!-- Summary cards (4 columns) -->
+    <div id="summary" class="stat-grid-4" style="display:none">
+      <div class="stat-card">
+        <div class="stat-icon">💬</div>
+        <div class="stat-value" id="totalMsg" style="color:#2563eb">0</div>
+        <div class="stat-label">Total Pesan</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🤖</div>
+        <div class="stat-value" id="totalAi" style="color:#7c3aed">0</div>
+        <div class="stat-label">AI Calls</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">⚡</div>
+        <div class="stat-value" id="avgResponse" style="color:#16a34a">—</div>
+        <div class="stat-label">Avg Response (det)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-value" id="activeCount" style="color:#ea580c">0</div>
+        <div class="stat-label">Nomor Aktif</div>
+      </div>
+    </div>
+
+    <!-- Trend chart -->
+    <div id="chartWrap" class="card mt-4" style="display:none">
+      <h2 style="font-size:15px;font-weight:600;color:#1a1d23;margin:0 0 16px">Tren Harian</h2>
+      <div id="chart" class="flex items-end gap-1" style="height:120px"></div>
+      <div id="chartLabels" class="flex gap-1 mt-1"></div>
+    </div>
+
+    <!-- Advanced stats: keywords + active numbers -->
+    <div id="advancedWrap" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px" class="advanced-grid">
+
+        <!-- Top Keywords -->
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h2 style="font-size:15px;font-weight:600;color:#1a1d23;margin:0">Top Kata Kunci (7 hari)</h2>
+          </div>
+          <div id="keywordList"></div>
+          <div id="keywordEmpty" class="cache-note" style="display:none">Belum ada data percakapan.</div>
+        </div>
+
+        <!-- Most Active Numbers -->
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h2 style="font-size:15px;font-weight:600;color:#1a1d23;margin:0">Nomor Paling Aktif</h2>
+          </div>
+          <div id="phoneList"></div>
+          <div id="phoneEmpty" class="cache-note" style="display:none">Belum ada data percakapan.</div>
+        </div>
+      </div>
+      <p id="cacheNote" class="cache-note" style="margin-top:8px;text-align:right"></p>
+    </div>
+
+    <!-- Daily table -->
+    <div id="tableWrap" class="table-wrap mt-4" style="display:none">
+      <table>
+        <thead><tr><th>Tanggal</th><th>Total Pesan</th><th>AI Calls</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <style>@media(max-width:600px){ .advanced-grid{ grid-template-columns:1fr !important } }</style>
+  `);
+
+  const res = await api.clients.list();
+  const sel = document.getElementById('clientSelect');
+  (res?.data || []).forEach(c => sel.innerHTML += `<option value="${c.id}">${esc(c.nama)}</option>`);
+}
+
+async function loadStats() {
+  const klien_id  = document.getElementById('clientSelect').value;
+  const from_date = document.getElementById('fromDate').value;
+  const to_date   = document.getElementById('toDate').value;
+  if (!klien_id) { toast('Pilih klien terlebih dahulu', 'error'); return; }
+
+  const [rangeRes, advRes] = await Promise.all([
+    api.stats.range({ klien_id, from_date, to_date }),
+    api.stats.advanced({ klien_id, from_date, to_date }),
+  ]);
+
+  // ── Range stats ──────────────────────────────────────────────────────────
+  if (!rangeRes?.success) { toast('Gagal memuat data', 'error'); return; }
+  const data = rangeRes.data;
+  const totalMsg = data.reduce((s,r) => s + Number(r.total_messages), 0);
+  const totalAi  = data.reduce((s,r) => s + Number(r.ai_calls), 0);
+
+  document.getElementById('totalMsg').textContent = totalMsg.toLocaleString('id-ID');
+  document.getElementById('totalAi').textContent  = totalAi.toLocaleString('id-ID');
+  document.getElementById('summary').style.display = 'grid';
+
+  if (data.length) {
+    const max = Math.max(...data.map(r => Number(r.total_messages)), 1);
+    document.getElementById('chart').innerHTML = data.map(r => `
+      <div class="flex-1 chart-bar" style="height:${Math.max(4,Math.round((Number(r.total_messages)/max)*100))}px"
+           title="${r.date}: ${r.total_messages} pesan"></div>
+    `).join('');
+    document.getElementById('chartLabels').innerHTML = data.map(r =>
+      `<div class="flex-1 chart-label">${r.date.slice(5)}</div>`
+    ).join('');
+    document.getElementById('chartWrap').style.display = 'block';
+
+    document.getElementById('tbody').innerHTML = data.map(r => `
+      <tr>
+        <td>${r.date}</td>
+        <td style="color:#2563eb;font-weight:500">${Number(r.total_messages).toLocaleString('id-ID')}</td>
+        <td style="color:#7c3aed;font-weight:500">${Number(r.ai_calls).toLocaleString('id-ID')}</td>
+      </tr>
+    `).join('');
+    document.getElementById('tableWrap').style.display = 'block';
+  }
+
+  // ── Advanced stats ────────────────────────────────────────────────────────
+  if (advRes?.success) {
+    const adv = advRes.data;
+
+    // Avg response time
+    const avgSecs = Number(adv.responseTime?.avg_secs || 0);
+    document.getElementById('avgResponse').textContent =
+      avgSecs > 0 ? avgSecs.toFixed(1) : '—';
+
+    // Render keywords
+    const kws = adv.keywords || [];
+    document.getElementById('activeCount').textContent = (adv.activeNumbers || []).length;
+
+    if (kws.length) {
+      const maxCount = Math.max(...kws.map(k => k.count), 1);
+      document.getElementById('keywordList').innerHTML = kws.map(k => `
+        <div class="keyword-bar">
+          <span class="keyword-word">${esc(k.word)}</span>
+          <div class="keyword-track">
+            <div class="keyword-fill" style="width:${Math.round((k.count/maxCount)*100)}%"></div>
+          </div>
+          <span class="keyword-count">${k.count}x</span>
+        </div>
+      `).join('');
+      document.getElementById('keywordEmpty').style.display = 'none';
+    } else {
+      document.getElementById('keywordList').innerHTML = '';
+      document.getElementById('keywordEmpty').style.display = 'block';
+    }
+
+    // Render active numbers
+    const nums = adv.activeNumbers || [];
+    if (nums.length) {
+      document.getElementById('phoneList').innerHTML = nums.map((n, i) => `
+        <div class="phone-row">
+          <span class="phone-rank">${i+1}</span>
+          <div class="phone-info">
+            <div class="phone-name">${esc(n.sender_name || n.user_phone)}</div>
+            ${n.sender_name ? `<div class="phone-num">${esc(n.user_phone)}</div>` : ''}
+          </div>
+          <span class="phone-count">${n.message_count} pesan</span>
+        </div>
+      `).join('');
+      document.getElementById('phoneEmpty').style.display = 'none';
+    } else {
+      document.getElementById('phoneList').innerHTML = '';
+      document.getElementById('phoneEmpty').style.display = 'block';
+    }
+
+    // Cache freshness note
+    const updatedAt = adv.updatedAt;
+    const cacheLabel = adv.cached ? 'Cache' : 'Live';
+    document.getElementById('cacheNote').textContent =
+      updatedAt ? `${cacheLabel} — diperbarui ${new Date(updatedAt).toLocaleString('id-ID')}` : '';
+
+    document.getElementById('advancedWrap').style.display = 'block';
+  }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Template — NgomeAI Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/css/style.css">
+</head>
+<body>
+<script src="/admin/js/auth.js"></script>
+<script src="/admin/js/api.js"></script>
+<script src="/admin/js/app.js"></script>
+<script>
+auth.requireAuth();
+let clients = [], templates = [], selectedClient = null;
+
+async function init() {
+  renderLayout('Template', `
+    <div class="flex gap-3 items-center mb-4">
+      <select id="clientSelect" onchange="onClientChange()" style="max-width:280px">
+        <option value="">— Pilih Klien —</option>
+      </select>
+      <button onclick="createTemplate()" id="addBtn" class="btn btn-primary" disabled>+ Tambah Template</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Keywords</th><th>Jawaban</th><th>Dibuat</th><th>Aksi</th></tr></thead>
+        <tbody id="tbody"><tr><td colspan="4" class="text-center py-8 text-muted">Pilih klien terlebih dahulu</td></tr></tbody>
+      </table>
+    </div>
+  `);
+
+  const res = await api.clients.list();
+  clients = res?.data || [];
+  const sel = document.getElementById('clientSelect');
+  clients.forEach(c => sel.innerHTML += `<option value="${c.id}">${esc(c.nama)}</option>`);
+}
+
+async function onClientChange() {
+  selectedClient = document.getElementById('clientSelect').value;
+  document.getElementById('addBtn').disabled = !selectedClient;
+  if (!selectedClient) return;
+  const res = await api.templates.list(selectedClient);
+  templates = res?.data || [];
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  if (!templates.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center py-8 text-muted">Belum ada template</td></tr>';
+    return;
+  }
+  tbody.innerHTML = templates.map(t => `
+    <tr>
+      <td><div class="flex gap-1" style="flex-wrap:wrap">${t.keywords.split(',').map(k => `<span class="badge badge-green">${esc(k.trim())}</span>`).join('')}</div></td>
+      <td style="max-width:320px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.answer)}</div></td>
+      <td class="text-muted text-sm">${new Date(t.created_at).toLocaleDateString('id-ID')}</td>
+      <td>
+        <div class="flex gap-2">
+          <button data-action="edit"   data-id="${t.id}" class="btn btn-ghost btn-sm">Edit</button>
+          <button data-action="delete" data-id="${t.id}" class="btn btn-danger btn-sm">Hapus</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    if (btn.dataset.action === 'edit')   editTemplate(id);
+    if (btn.dataset.action === 'delete') deleteTemplate(id);
+  });
+});
+
+function createTemplate() {
+  showModal({
+    title: 'Tambah Template',
+    fields: [
+      { name: 'keywords', label: 'Keywords (pisah dengan koma)', placeholder: 'halo, hai, selamat', required: true },
+      { name: 'answer',   label: 'Jawaban Bot', type: 'textarea', placeholder: 'Halo! Ada yang bisa kami bantu?', required: true },
+    ],
+    onSubmit: async (d) => {
+      const res = await api.templates.create({ klien_id: selectedClient, ...d });
+      if (res?.success) { toast('Template ditambahkan'); onClientChange(); }
+      else toast(res?.error || 'Gagal', 'error');
+    }
+  });
+}
+
+function editTemplate(id) {
+  const t = templates.find(x => x.id === id);
+  showModal({
+    title: 'Edit Template',
+    fields: [
+      { name: 'keywords', label: 'Keywords', value: t.keywords, required: true },
+      { name: 'answer',   label: 'Jawaban Bot', type: 'textarea', value: t.answer, required: true },
+    ],
+    onSubmit: async (d) => {
+      const res = await api.templates.update({ id, ...d });
+      if (res?.success) { toast('Template diperbarui'); onClientChange(); }
+      else toast(res?.error || 'Gagal', 'error');
+    }
+  });
+}
+
+function deleteTemplate(id) {
+  confirmDelete('Hapus template ini?', async () => {
+    const res = await api.templates.delete(id);
+    if (res?.success) { toast('Template dihapus'); onClientChange(); }
+    else toast(res?.error || 'Gagal', 'error');
+  });
+}
+
+init();
+</script>
+</body>
+</html>

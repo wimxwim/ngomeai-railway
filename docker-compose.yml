@@ -1,0 +1,71 @@
+services:
+
+  # ─── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: codeengine-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ngomeai
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "127.0.0.1:5434:5432"          # bind localhost only
+    volumes:
+      - pgdata_codeengine:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d  # auto-init schema.sql + migrations
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ngomeai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── WaHA (WhatsApp HTTP API) ─────────────────────────────────────────────────
+  # Aktifkan dengan: docker compose --profile waha up -d
+  # Atau tambah "waha" ke COMPOSE_PROFILES di .env
+  waha:
+    image: devlikeapro/waha
+    container_name: codeengine-waha
+    restart: unless-stopped
+    profiles: ["waha"]
+    ports:
+      - "127.0.0.1:3002:3000"          # bind localhost only
+    environment:
+      WHATSAPP_API_KEY:  ${WAHA_API_KEY:-}
+      WHATSAPP_WEBHOOK:  ${WAHA_WEBHOOK_URL:-http://host.docker.internal:3000/webhook/waha}
+    volumes:
+      - waha_sessions:/app/.sessions
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # akses host dari container
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/version || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  pgdata_codeengine:
+  waha_sessions:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cara pakai:
+#
+#   Minimal (hanya DB):
+#     docker compose up -d
+#
+#   Dengan WaHA:
+#     docker compose --profile waha up -d
+#
+#   Semua services:
+#     COMPOSE_PROFILES=waha docker compose up -d
+#
+# Node.js app (codeengine) jalan via PM2 di host:
+#   pm2 start ecosystem.config.js
+#
+# Environment variables penting (.env):
+#   POSTGRES_PASSWORD=secret_password
+#   WAHA_API_KEY=your_waha_key
+#   WAHA_WEBHOOK_URL=http://192.168.x.x:3000/webhook/waha  (IP host Anda)
+# ─────────────────────────────────────────────────────────────────────────────

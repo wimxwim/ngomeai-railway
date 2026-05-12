@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Environment — NEVER commit secrets
+.env
+.env.local
+.env.*.local
+.env.backup
+.env.railway
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Baileys sessions — contain WhatsApp credentials, must not be committed
+baileys_sessions/
+
+# Runtime data
+data/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+dist/
+build/

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Bot — Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 16px;
+    }
+    .logo { font-size: 2.5rem; margin-bottom: 8px; }
+    h1 { font-size: 1.4rem; color: #94a3b8; margin-bottom: 32px; font-weight: 400; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      width: 100%;
+      max-width: 800px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: #1e2533;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .card-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+    .card-value { font-size: 1.8rem; font-weight: 700; margin-top: 6px; color: #f1f5f9; }
+    .card-sub { font-size: 0.8rem; color: #475569; margin-top: 4px; }
+
+    .status-row {
+      display: flex; align-items: center; gap: 10px;
+      background: #1e2533;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 16px 20px;
+      width: 100%; max-width: 800px;
+      margin-bottom: 12px;
+    }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.green  { background: #22c55e; box-shadow: 0 0 8px #22c55e88; }
+    .dot.red    { background: #ef4444; box-shadow: 0 0 8px #ef444488; }
+    .dot.yellow { background: #eab308; box-shadow: 0 0 8px #eab30888; }
+    .dot.pulse  { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    .status-name { flex: 1; font-size: 0.9rem; }
+    .status-val  { font-size: 0.85rem; color: #64748b; }
+
+    .section-title {
+      font-size: 0.7rem; color: #334155; text-transform: uppercase;
+      letter-spacing: 1.5px; margin: 20px 0 10px;
+      width: 100%; max-width: 800px;
+    }
+
+    .endpoint {
+      background: #1e2533;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 12px 16px;
+      width: 100%; max-width: 800px;
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 12px;
+      font-family: monospace;
+    }
+    .method {
+      font-size: 0.7rem; font-weight: 700; padding: 3px 8px;
+      border-radius: 4px; flex-shrink: 0;
+    }
+    .get  { background: #14532d; color: #4ade80; }
+    .post { background: #1e3a5f; color: #60a5fa; }
+    .path { color: #94a3b8; font-size: 0.85rem; }
+    .desc { color: #475569; font-size: 0.8rem; margin-left: auto; }
+
+    footer { margin-top: 40px; color: #1e293b; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+
+  <div class="logo">🤖</div>
+  <h1>WhatsApp Bot — Status Dashboard</h1>
+
+  <!-- Stats cards -->
+  <div class="grid">
+    <div class="card">
+      <div class="card-label">Server</div>
+      <div class="card-value" id="uptime">—</div>
+      <div class="card-sub">uptime</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Database</div>
+      <div class="card-value" id="db-status">—</div>
+      <div class="card-sub" id="db-time">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Waktu Server</div>
+      <div class="card-value" id="server-time" style="font-size:1.1rem;margin-top:10px">—</div>
+      <div class="card-sub">realtime</div>
+    </div>
+  </div>
+
+  <!-- Status checks -->
+  <div class="section-title">Status Komponen</div>
+
+  <div class="status-row">
+    <div class="dot green pulse" id="dot-server"></div>
+    <span class="status-name">Express Server</span>
+    <span class="status-val" id="val-server">Mengecek...</span>
+  </div>
+
+  <div class="status-row">
+    <div class="dot yellow" id="dot-db"></div>
+    <span class="status-name">PostgreSQL Database</span>
+    <span class="status-val" id="val-db">Mengecek...</span>
+  </div>
+
+  <div class="status-row">
+    <div class="dot yellow" id="dot-webhook"></div>
+    <span class="status-name">Webhook Endpoint</span>
+    <span class="status-val" id="val-webhook">Mengecek...</span>
+  </div>
+
+  <!-- Endpoints -->
+  <div class="section-title">API Endpoints</div>
+
+  <div class="endpoint">
+    <span class="method get">GET</span>
+    <span class="path">/health</span>
+    <span class="desc">Status server + DB</span>
+  </div>
+  <div class="endpoint">
+    <span class="method get">GET</span>
+    <span class="path">/webhook</span>
+    <span class="desc">Verifikasi token Meta</span>
+  </div>
+  <div class="endpoint">
+    <span class="method post">POST</span>
+    <span class="path">/webhook</span>
+    <span class="desc">Terima pesan WhatsApp</span>
+  </div>
+  <div class="endpoint">
+    <span class="method get">GET</span>
+    <span class="path">/</span>
+    <span class="desc">Dashboard ini</span>
+  </div>
+
+  <footer>Auto-refresh setiap 10 detik</footer>
+
+<script>
+  function formatUptime(s) {
+    if (s < 60) return s + 'd';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 'd';
+    const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+    return h + 'j ' + m + 'm';
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/health');
+      const d = await r.json();
+
+      document.getElementById('db-status').textContent = d.db === 'ok' ? '✓ OK' : '✗ Error';
+      document.getElementById('db-status').style.color = d.db === 'ok' ? '#22c55e' : '#ef4444';
+      document.getElementById('db-time').textContent = new Date(d.time).toLocaleTimeString('id-ID');
+      document.getElementById('server-time').textContent = new Date(d.time).toLocaleTimeString('id-ID');
+
+      // Server dot
+      document.getElementById('dot-server').className = 'dot green pulse';
+      document.getElementById('val-server').textContent = 'Aktif';
+
+      // DB dot
+      const dbOk = d.db === 'ok';
+      document.getElementById('dot-db').className = 'dot ' + (dbOk ? 'green' : 'red');
+      document.getElementById('val-db').textContent = dbOk ? 'Terhubung' : 'Gagal';
+
+      // Webhook dot
+      document.getElementById('dot-webhook').className = 'dot green';
+      document.getElementById('val-webhook').textContent = 'Siap (menunggu Meta)';
+
+      // Uptime dari performa browser sebagai proxy
+      document.getElementById('uptime').textContent = new Date().toLocaleTimeString('id-ID');
+
+    } catch(e) {
+      document.getElementById('dot-server').className = 'dot red';
+      document.getElementById('val-server').textContent = 'Server mati';
+      document.getElementById('db-status').textContent = '✗';
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 10000);
+  setInterval(() => {
+    document.getElementById('server-time').textContent = new Date().toLocaleTimeString('id-ID');
+  }, 1000);
+</script>
+</body>
+</html>

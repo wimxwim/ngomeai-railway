@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Knowledge Base — NgomeAI Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/css/style.css">
+</head>
+<body>
+<script src="/admin/js/auth.js"></script>
+<script src="/admin/js/api.js"></script>
+<script src="/admin/js/app.js"></script>
+<script>
+auth.requireAuth();
+let clients = [], kbItems = [], selectedClient = null;
+
+async function init() {
+  renderLayout('Knowledge Base', `
+    <div class="flex gap-3 items-center mb-4">
+      <select id="clientSelect" onchange="onClientChange()" style="max-width:280px">
+        <option value="">— Pilih Klien —</option>
+      </select>
+      <button onclick="createKb()" id="addBtn" class="btn btn-primary" disabled>+ Tambah KB</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Keywords</th><th>Konten</th><th>Dibuat</th><th>Aksi</th></tr></thead>
+        <tbody id="tbody"><tr><td colspan="4" class="text-center py-8 text-muted">Pilih klien terlebih dahulu</td></tr></tbody>
+      </table>
+    </div>
+  `);
+
+  const res = await api.clients.list();
+  clients = res?.data || [];
+  const sel = document.getElementById('clientSelect');
+  clients.forEach(c => sel.innerHTML += `<option value="${c.id}">${esc(c.nama)}</option>`);
+}
+
+async function onClientChange() {
+  selectedClient = document.getElementById('clientSelect').value;
+  document.getElementById('addBtn').disabled = !selectedClient;
+  if (!selectedClient) return;
+  const res = await api.kb.list(selectedClient);
+  kbItems = res?.data || [];
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  if (!kbItems.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center py-8 text-muted">Belum ada knowledge base</td></tr>';
+    return;
+  }
+  tbody.innerHTML = kbItems.map(k => `
+    <tr>
+      <td><div class="flex gap-1" style="flex-wrap:wrap">${k.keywords.split(',').map(kw => `<span class="badge badge-green">${esc(kw.trim())}</span>`).join('')}</div></td>
+      <td style="max-width:320px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${esc(k.content)}</div></td>
+      <td class="text-muted text-sm">${new Date(k.created_at).toLocaleDateString('id-ID')}</td>
+      <td>
+        <div class="flex gap-2">
+          <button data-action="edit"   data-id="${k.id}" class="btn btn-ghost btn-sm">Edit</button>
+          <button data-action="delete" data-id="${k.id}" class="btn btn-danger btn-sm">Hapus</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    if (btn.dataset.action === 'edit')   editKb(id);
+    if (btn.dataset.action === 'delete') deleteKb(id);
+  });
+});
+
+function createKb() {
+  showModal({
+    title: 'Tambah Knowledge Base',
+    fields: [
+      { name: 'keywords', label: 'Keywords (pisah dengan koma)', placeholder: 'pengiriman, ongkir, kirim', required: true },
+      { name: 'content',  label: 'Konten / Jawaban', type: 'textarea', placeholder: 'Kami melayani pengiriman ke seluruh Indonesia...', required: true },
+    ],
+    onSubmit: async (d) => {
+      const res = await api.kb.create({ klien_id: selectedClient, ...d });
+      if (res?.success) { toast('Knowledge base ditambahkan'); onClientChange(); }
+      else toast(res?.error || 'Gagal', 'error');
+    }
+  });
+}
+
+function editKb(id) {
+  const k = kbItems.find(x => x.id === id);
+  showModal({
+    title: 'Edit Knowledge Base',
+    fields: [
+      { name: 'keywords', label: 'Keywords', value: k.keywords, required: true },
+      { name: 'content',  label: 'Konten', type: 'textarea', value: k.content, required: true },
+    ],
+    onSubmit: async (d) => {
+      const res = await api.kb.update({ id, ...d });
+      if (res?.success) { toast('Knowledge base diperbarui'); onClientChange(); }
+      else toast(res?.error || 'Gagal', 'error');
+    }
+  });
+}
+
+function deleteKb(id) {
+  confirmDelete('Hapus knowledge base ini?', async () => {
+    const res = await api.kb.delete(id);
+    if (res?.success) { toast('Knowledge base dihapus'); onClientChange(); }
+    else toast(res?.error || 'Gagal', 'error');
+  });
+}
+
+init();
+</script>
+</body>
+</html>

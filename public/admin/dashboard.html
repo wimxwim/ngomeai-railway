@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — NgomeAI Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/css/style.css">
+</head>
+<body>
+<script src="/admin/js/auth.js"></script>
+<script src="/admin/js/api.js"></script>
+<script src="/admin/js/app.js"></script>
+<script>
+auth.requireAuth();
+
+async function init() {
+  renderLayout('Dashboard', `
+    <div class="stat-grid" id="cards">
+      ${[1,2,3,4].map(() => `
+        <div class="stat-card">
+          <div style="height:20px;background:#f3f4f6;border-radius:6px;margin-bottom:10px"></div>
+          <div style="height:32px;background:#f3f4f6;border-radius:6px"></div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="card">
+      <h2 style="font-size:15px;font-weight:600;color:#1a1d23;margin:0 0 16px">7 Hari Terakhir</h2>
+      <div id="chart" class="flex items-end gap-2" style="height:120px"></div>
+    </div>
+  `);
+
+  const res = await api.stats.summary();
+  if (!res?.success) return;
+  const s = res.data;
+
+  document.getElementById('cards').innerHTML = [
+    { label: 'Klien Aktif',      value: s.total_clients,   icon: '👥', color: '#16a34a' },
+    { label: 'Pesan Hari Ini',   value: s.today_messages,  icon: '💬', color: '#2563eb' },
+    { label: 'AI Calls Hari Ini',value: s.today_ai_calls,  icon: '🤖', color: '#7c3aed' },
+    { label: 'Pesan 7 Hari',     value: s.week_messages,   icon: '📈', color: '#d97706' },
+  ].map(c => `
+    <div class="stat-card">
+      <div class="stat-icon">${c.icon}</div>
+      <div class="stat-value" style="color:${c.color}">${c.value}</div>
+      <div class="stat-label">${c.label}</div>
+    </div>
+  `).join('');
+
+  const today = new Date();
+  const dates = Array.from({length:7}, (_,i) => {
+    const d = new Date(today); d.setDate(d.getDate()-6+i);
+    return d.toISOString().slice(0,10);
+  });
+
+  const cr = await api.clients.list();
+  if (!cr?.success || !cr.data.length) return;
+
+  const totals = {};
+  dates.forEach(d => totals[d] = 0);
+
+  await Promise.all(cr.data.map(async c => {
+    const r = await api.stats.range({ klien_id: c.id, from_date: dates[0], to_date: dates[6] });
+    if (r?.success) r.data.forEach(row => {
+      if (totals[row.date] !== undefined) totals[row.date] += Number(row.total_messages);
+    });
+  }));
+
+  const max = Math.max(...Object.values(totals), 1);
+  document.getElementById('chart').innerHTML = dates.map(d => `
+    <div class="flex-1 flex flex-col items-center" style="display:flex;flex-direction:column;align-items:center;flex:1">
+      <div style="flex:1;display:flex;align-items:flex-end;width:100%">
+        <div class="chart-bar w-full" style="height:${Math.max(4, Math.round((totals[d]/max)*100))}px"></div>
+      </div>
+      <div class="chart-label">${d.slice(5)}</div>
+    </div>
+  `).join('');
+}
+
+init();
+</script>
+</body>
+</html>

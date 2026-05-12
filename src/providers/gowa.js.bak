@@ -1,0 +1,251 @@
+/**
+ * GoWA adapter — go-whatsapp-web-multidevice
+ *
+ * GoWA adalah REST API berbasis Go yang menggunakan whatsmeow untuk koneksi
+ * ke WhatsApp Web. Berjalan sebagai proses terpisah (default port 3001).
+ *
+ * Kelebihan GoWA:
+ *   - Ringan, memory rendah (Go binary)
+ *   - Multi-device support (v8+)
+ *   - Webhook HMAC-SHA256
+ *   - Support send: text, image, audio, file, video, location, sticker, poll
+ *   - Typing indicator via /send/chat-presence
+ *   - Mark read via /message/:id/read
+ *
+ * Env:
+ *   GOWA_URL            — URL GoWA (default: http://localhost:3001)
+ *   GOWA_BASIC_AUTH     — "user:pass" untuk Basic Auth (opsional)
+ *   GOWA_WEBHOOK_SECRET — HMAC secret untuk verifikasi webhook masuk
+ *
+ * Webhook payload dari GoWA:
+ *   { event: "message", device_id: "628xxx@s.whatsapp.net",
+ *     payload: { id, chat_id, from, body, ... } }
+ *
+ * PENTING: GoWA v8 pakai header X-Device-Id untuk semua request.
+ * Format phone: "628xxx@s.whatsapp.net" (JID format).
+ * Send image/audio/file menggunakan JSON body (bukan multipart).
+ */
+
+const axios  = require("axios");
+const config = require("../config");
+const logger = require("../utils/logger");
+const { isSafeUrl } = require("../utils/urlGuard");
+
+// Shared axios instance dengan Basic Auth jika dikonfigurasi
+const http = axios.create({ timeout: 15_000 });
+
+if (config.gowaBasicAuth) {
+  const sep  = config.gowaBasicAuth.indexOf(":");
+  const user = sep > -1 ? config.gowaBasicAuth.slice(0, sep) : config.gowaBasicAuth;
+  const pass = sep > -1 ? config.gowaBasicAuth.slice(sep + 1) : "";
+  http.defaults.auth = { username: user, password: pass };
+}
+
+// Helper: header X-Device-Id untuk multi-device GoWA v8
+function dh(deviceId) {
+  return deviceId ? { "X-Device-Id": String(deviceId) } : {};
+}
+
+// Helper: format nomor ke JID GoWA (format: "628xxx@s.whatsapp.net")
+function toJid(phone) {
+  if (!phone) return "";
+  const digits = String(phone).replace(/\D/g, "");
+  if (String(phone).includes("@")) return phone;
+  return `${digits}@s.whatsapp.net`;
+}
+
+// Helper: throw error dengan log
+function fail(label, err, extra) {
+  if (!extra) extra = {};
+  const status = err.response && err.response.status;
+  const msg    = (err.response && err.response.data && (err.response.data.message || err.response.data.error))
+    || err.message;
+  logger.error(`[GoWA] ${label}`, Object.assign({}, extra, { status: status, error: msg }));
+  throw new Error(`[GoWA] ${label} (${status != null ? status : "network"}): ${msg}`);
+}
+
+// ─── Send text ────────────────────────────────────────────────────────────
+async function sendText(phone, message, deviceId, opts) {
+  if (!opts) opts = {};
+  const body = {
+    phone:   toJid(phone),
+    message: String(message).slice(0, 4096),
+  };
+  if (opts.replyMessageId) body.reply_message_id = opts.replyMessageId;
+  if (Array.isArray(opts.mentions) && opts.mentions.length) body.mentions = opts.mentions;
+
+  try {
+    const res = await http.post(
+      `${config.gowaUrl}/send/message`,
+      body,
+      { headers: Object.assign({ "Content-Type": "application/json" }, dh(deviceId)) }
+    );
+    logger.info("[GoWA] text sent", { phone: phone, msgId: res.data && res.data.results && res.data.results.message_id });
+    return res.data && res.data.results;
+  } catch (err) { fail("sendText", err, { phone: phone }); }
+}
+
+// ─── Send image via URL (JSON body) ──────────────────────────────────────
+async function sendImage(phone, imageUrl, deviceId, opts) {
+  if (!isSafeUrl(imageUrl)) {
+    logger.warn("[GoWA] sendImage blocked unsafe URL", { url: String(imageUrl).slice(0, 100) });
+    return null;
+  }
+  if (!opts) opts = {};
+  const body = {
+    phone:     toJid(phone),
+    image_url: imageUrl,
+  };
+  if (opts.caption)  body.caption   = String(opts.caption);
+  if (opts.compress) body.compress  = true;
+  if (opts.viewOnce) body.view_once = true;
+
+  try {
+    const res = await http.post(
+      `${config.gowaUrl}/send/image`,
+      body,
+      { headers: Object.assign({ "Content-Type": "application/json" }, dh(deviceId)) }
+    );
+    logger.info("[GoWA] image sent", { phone: phone, msgId: res.data && res.data.results && res.data.results.message_id });
+    return res.data && res.data.results;
+  } catch (err) { fail("sendImage", err, { phone: phone }); }
+}
+
+// ─── Send audio via URL (JSON body) ──────────────────────────────────────
+async function sendAudio(phone, audioUrl, deviceId) {
+  if (!isSafeUrl(audioUrl)) {
+    logger.warn("[GoWA] sendAudio blocked unsafe URL", { url: String(audioUrl).slice(0, 100) });
+    return null;
+  }
+  const body = {
+    phone:     toJid(phone),
+    audio_url: audioUrl,
+  };
+
+  try {
+    const res = await http.post(
+      `${config.gowaUrl}/send/audio`,
+      body,
+      { headers: Object.assign({ "Content-Type": "application/json" }, dh(deviceId)) }
+    );
+    logger.info("[GoWA] audio sent", { phone: phone, msgId: res.data && res.data.results && res.data.results.message_id });
+    return res.data && res.data.results;
+  } catch (err) { fail("sendAudio", err, { phone: phone }); }
+}
+
+// ─── Send file/document via URL (JSON body) ───────────────────────────────
+async function sendFile(phone, fileUrl, deviceId, opts) {
+  if (!isSafeUrl(fileUrl)) {
+    logger.warn("[GoWA] sendFile blocked unsafe URL", { url: String(fileUrl).slice(0, 100) });
+    return null;
+  }
+  if (!opts) opts = {};
+  const body = {
+    phone:    toJid(phone),
+    file_url: fileUrl,
+  };
+  if (opts.caption) body.caption = String(opts.caption);
+
+  try {
+    const res = await http.post(
+      `${config.gowaUrl}/send/file`,
+      body,
+      { headers: Object.assign({ "Content-Type": "application/json" }, dh(deviceId)) }
+    );
+    logger.info("[GoWA] file sent", { phone: phone, msgId: res.data && res.data.results && res.data.results.message_id });
+    return res.data && res.data.results;
+  } catch (err) { fail("sendFile", err, { phone: phone }); }
+}
+
+// ─── Send location ────────────────────────────────────────────────────────
+async function sendLocation(phone, latitude, longitude, deviceId) {
+  try {
+    const res = await http.post(
+      `${config.gowaUrl}/send/location`,
+      { phone: toJid(phone), latitude: latitude, longitude: longitude },
+      { headers: Object.assign({ "Content-Type": "application/json" }, dh(deviceId)) }
+    );
+    logger.info("[GoWA] location sent", { phone: phone });
+    return res.data && res.data.results;
+  } catch (err) { fail("sendLocation", err, { phone: phone }); }
+}
+
+// ─── Typing indicator (non-fatal) ────────────────────────────────────────
+// sendTyping disabled - endpoint not available
+async function sendTyping() { /* disabled */ }
+
+// ─── Mark message as read (non-fatal) ────────────────────────────────────
+// markRead disabled - endpoint not available
+async function markRead() { /* disabled */ }
+
+// ─── Get login QR code (GoWA v8) ─────────────────────────────────────────
+// Return: Buffer (PNG) atau null jika gagal.
+// GoWA v8: endpoint adalah GET /app/login, device ID via X-Device-Id header.
+async function getLoginQR(deviceId) {
+  try {
+    const endpoint = `${config.gowaUrl}/app/login`;
+
+    const res = await http.get(endpoint, {
+      headers: Object.assign({ "Content-Type": "application/json" }, dh(deviceId)),
+      timeout: 15_000,
+    });
+
+    const qrLink = res.data?.results?.qr_link;
+    if (!qrLink) return null;
+
+    // data:image/png;base64,... → decode langsung
+    if (qrLink.startsWith("data:")) {
+      const base64 = qrLink.split(",")[1];
+      return base64 ? Buffer.from(base64, "base64") : null;
+    }
+
+    // URL eksternal → fetch gambar
+    if (qrLink.startsWith("http")) {
+      const imgRes = await http.get(qrLink, { responseType: "arraybuffer", timeout: 10_000 });
+      return Buffer.from(imgRes.data);
+    }
+
+    return null;
+  } catch (err) {
+    logger.warn("[GoWA] getLoginQR failed", { deviceId, error: err.message });
+    return null;
+  }
+}
+
+// ─── Get device status ────────────────────────────────────────────────────
+async function getDeviceStatus(deviceId) {
+  try {
+    const res = await http.get(
+      `${config.gowaUrl}/devices/${encodeURIComponent(deviceId)}/status`,
+      { headers: dh(deviceId) }
+    );
+    return (res.data && res.data.results) || null;
+  } catch (err) {
+    logger.warn("[GoWA] getDeviceStatus failed", { deviceId: deviceId, error: err.message });
+    return null;
+  }
+}
+
+// ─── List all devices ─────────────────────────────────────────────────────
+async function listDevices() {
+  try {
+    const res = await http.get(`${config.gowaUrl}/devices`);
+    return (res.data && res.data.results) || [];
+  } catch (err) {
+    logger.warn("[GoWA] listDevices failed", { error: err.message });
+    return [];
+  }
+}
+
+module.exports = {
+  sendText:        sendText,
+  sendImage:       sendImage,
+  sendAudio:       sendAudio,
+  sendFile:        sendFile,
+  sendLocation:    sendLocation,
+  sendTyping:      sendTyping,
+  markRead:        markRead,
+  getLoginQR:      getLoginQR,
+  getDeviceStatus: getDeviceStatus,
+  listDevices:     listDevices,
+};

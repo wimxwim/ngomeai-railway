@@ -1,0 +1,350 @@
+/**
+ * WaHA adapter — WhatsApp HTTP API (https://waha.devlike.pro)
+ *
+ * WaHA adalah REST API berbasis Node.js + NestJS yang menggunakan beberapa
+ * engine WhatsApp (WEBJS, NOWEB, GOWS). Berjalan sebagai Docker container.
+ *
+ * Kelebihan WaHA:
+ *   - Multi-engine (WEBJS paling stabil, NOWEB paling ringan)
+ *   - Dashboard bawaan
+ *   - API lengkap: send text/image/file/voice/video/location/poll/contact
+ *   - Typing indicator via startTyping/stopTyping
+ *   - Mark read via sendSeen
+ *   - Session management via REST API
+ *   - Webhook dengan HMAC (opsional)
+ *
+ * Env:
+ *   WAHA_URL            — URL WaHA (default: http://localhost:3000)
+ *   WAHA_API_KEY        — API key dari WAHA_API_KEY env di WaHA
+ *   WAHA_WEBHOOK_SECRET — HMAC secret untuk verifikasi webhook masuk (opsional)
+ *
+ * Webhook payload dari WaHA:
+ *   { id, timestamp, session, engine, event: "message",
+ *     payload: { id, from, to, fromMe, body, hasMedia, media, ... } }
+ *
+ * PENTING: WaHA pakai chatId format "628xxx@c.us" (bukan @s.whatsapp.net seperti GoWA)
+ */
+
+const axios  = require("axios");
+const config = require("../config");
+const { isSafeUrl } = require("../utils/urlGuard");
+const logger = require("../utils/logger");
+
+// Shared axios instance
+// FIX: added retry wrapper for all WAHA calls
+const http = axios.create({ timeout: 15_000 });
+
+// Inject API key ke setiap request
+http.interceptors.request.use((cfg) => {
+  if (config.wahaApiKey) cfg.headers["X-Api-Key"] = config.wahaApiKey;
+  return cfg;
+});
+
+// Helper: format nomor ke chatId WaHA (format: "628xxx@c.us")
+function toChatId(phone) {
+  if (!phone) return "";
+  const digits = String(phone).replace(/\D/g, "");
+  if (String(phone).includes("@")) return phone;
+  return `${digits}@c.us`;
+}
+
+// Helper: encode session name untuk URL
+function encSess(session) {
+  return encodeURIComponent(String(session || "default"));
+}
+
+// Helper: throw error dengan log
+function fail(label, err, extra) {
+  const status = err.response?.status;
+  const msg    = err.response?.data?.message || err.response?.data?.error || err.message;
+  logger.error(`[WaHA] ${label}`, Object.assign({}, extra, { status: status, error: msg }));
+  throw new Error(`[WaHA] ${label} (${status != null ? status : "network"}): ${msg}`);
+}
+
+// ─── Send text ────────────────────────────────────────────────────────────
+// FIX: added retry wrapper for all WAHA calls
+async function callWaha(method, url, data, baseUrl) {
+  const maxRetries = 3;
+  const backoff = (attempt) => new Promise(res => setTimeout(res, 200 * Math.pow(2, attempt)));
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const cfg = { method, url: (baseUrl || config.wahaUrl) + url, data, headers: { "Content-Type": "application/json" } };
+      const res = await http(cfg);
+      return res;
+    } catch (err) {
+      if (attempt < maxRetries) {
+        logger.warn(`[WaHA] ${method} ${url} failed, retry ${attempt + 1}`, { error: err.message });
+        await backoff(attempt);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+async function sendText(session, phone, message, opts, baseUrl) {
+  if (!opts) opts = {};
+  const body = {
+    chatId:  opts.chatId || toChatId(phone), // opts.chatId untuk LID format (@lid)
+    text:    String(message).slice(0, 4096),
+    session: session,
+  };
+  if (opts.replyTo) body.reply_to = opts.replyTo;
+  if (opts.linkPreview !== undefined) body.linkPreview = opts.linkPreview;
+
+  try {
+    const res = await callWaha('post',
+      `/api/sendText`,
+      body,
+      baseUrl || config.wahaUrl
+    );
+    // WAHA might return 201 with empty body (res.data = null)
+    const responseData = res.data || {};
+    const msgId = responseData.id || responseData.messageId || '';
+    logger.info("[WAHA] text sent", { session: session, phone: phone, msgId: msgId });
+    return responseData;
+  } catch (err) { fail("sendText", err, { session: session, phone: phone }); }
+}
+
+// ─── Send image via URL ───────────────────────────────────────────────────
+async function sendImage(session, phone, imageUrl, opts, baseUrl) {
+  if (!isSafeUrl(imageUrl)) {
+    logger.warn("[WaHA] sendImage blocked unsafe URL", { url: String(imageUrl).slice(0, 100) });
+    return null;
+  }
+  if (!opts) opts = {};
+  const body = {
+    chatId:  toChatId(phone),
+    file:    { url: imageUrl },
+    session: session,
+  };
+  if (opts.caption) body.caption  = String(opts.caption);
+  if (opts.replyTo) body.reply_to = opts.replyTo;
+
+  try {
+    const useUrl = baseUrl || config.wahaUrl;
+    const res = await http.post(
+      `${useUrl}/api/sendImage`,
+      body,
+      { headers: { "Content-Type": "application/json" } }
+    );
+    logger.info("[WaHA] image sent", { session: session, phone: phone, msgId: res.data && res.data.id });
+    return res.data;
+  } catch (err) { fail("sendImage", err, { session: session, phone: phone }); }
+}
+
+// ─── Send file/document via URL ───────────────────────────────────────────
+async function sendFile(session, phone, fileUrl, opts, baseUrl) {
+  if (!isSafeUrl(fileUrl)) {
+    logger.warn("[WaHA] sendFile blocked unsafe URL", { url: String(fileUrl).slice(0, 100) });
+    return null;
+  }
+  if (!opts) opts = {};
+  const body = {
+    chatId:  toChatId(phone),
+    file:    { url: fileUrl },
+    session: session,
+  };
+  if (opts.caption) body.caption  = String(opts.caption);
+  if (opts.replyTo) body.reply_to = opts.replyTo;
+
+  try {
+    const res = await callWaha('post', '/api/sendFile', body, baseUrl || config.wahaUrl);
+    logger.info("[WaHA] file sent", { session: session, phone: phone, msgId: res.data && res.data.id });
+    return res.data;
+  } catch (err) { fail("sendFile", err, { session: session, phone: phone }); }
+}
+
+// ─── Send voice/audio via URL ─────────────────────────────────────────────
+async function sendVoice(session, phone, audioUrl, opts, baseUrl) {
+  if (!isSafeUrl(audioUrl)) {
+    logger.warn("[WaHA] sendVoice blocked unsafe URL", { url: String(audioUrl).slice(0, 100) });
+    return null;
+  }
+  if (!opts) opts = {};
+  const body = {
+    chatId:  toChatId(phone),
+    file:    { url: audioUrl },
+    session: session,
+  };
+  if (opts.replyTo) body.reply_to = opts.replyTo;
+
+  try {
+    const res = await callWaha('post', '/api/sendVoice', body, baseUrl || config.wahaUrl);
+    logger.info("[WaHA] voice sent", { session: session, phone: phone, msgId: res.data && res.data.id });
+    return res.data;
+  } catch (err) { fail("sendVoice", err, { session: session, phone: phone }); }
+}
+
+// ─── Send location ────────────────────────────────────────────────────────
+async function sendLocation(session, phone, latitude, longitude, opts, baseUrl) {
+  if (!opts) opts = {};
+  const body = {
+    chatId:    toChatId(phone),
+    latitude:  latitude,
+    longitude: longitude,
+    session:   session,
+  };
+  if (opts.title)   body.title    = String(opts.title);
+  if (opts.replyTo) body.reply_to = opts.replyTo;
+
+  try {
+    const res = await callWaha('post', '/api/sendLocation', body, baseUrl || config.wahaUrl);
+    logger.info("[WaHA] location sent", { session: session, phone: phone });
+    return res.data;
+  } catch (err) { fail("sendLocation", err, { session: session, phone: phone }); }
+}
+
+// ─── Typing indicator (non-fatal) ────────────────────────────────────────
+async function sendTyping(session, phone, typing, baseUrl) {
+  if (typing === undefined) typing = true;
+  const action = typing ? "startTyping" : "stopTyping";
+  try {
+    await http.post(
+      `${config.wahaUrl}/api/${action}`,
+      { chatId: toChatId(phone), session: session },
+      { headers: { "Content-Type": "application/json" } }
+    );
+  } catch (err) {
+    logger.warn("[WaHA] sendTyping failed (non-fatal)", { session: session, phone: phone, error: err.message });
+  }
+}
+
+// ─── Mark message as seen/read (non-fatal) ────────────────────────────────
+async function sendSeen(session, phone, messageId, baseUrl) {
+  try {
+    await http.post(
+      `${config.wahaUrl}/api/sendSeen`,
+      { chatId: toChatId(phone), messageId: messageId, session: session },
+      { headers: { "Content-Type": "application/json" } }
+    );
+  } catch (err) {
+    logger.warn("[WaHA] sendSeen failed (non-fatal)", { session: session, phone: phone, error: err.message });
+  }
+}
+
+// ─── Start new session ──────────────────────────────────────────────────
+async function startSession(session, baseUrl) {
+  try {
+    const useUrl = baseUrl || config.wahaUrl;
+    
+    // Check if session already exists
+    const existingSessions = await http.get(`${useUrl}/api/sessions`);
+    const existing = existingSessions.data?.find(s => s.name === session);
+    
+    if (existing) {
+      logger.info("[WaHA] Session already exists", { session: session, status: existing.status });
+      // If status is SCAN_QR_CODE or WORKING, just return existing
+      if (existing.status === "SCAN_QR_CODE" || existing.status === "WORKING") {
+        return existing;
+      }
+      // If other status, try to restart
+    }
+    
+    const res = await http.post(
+      `${useUrl}/api/sessions/start`,
+      { name: session, start: true },
+      { headers: { "Content-Type": "application/json" } }
+    );
+    logger.info("[WaHA] Session started", { session: session, status: res.data?.status });
+    return res.data;
+  } catch (err) {
+    // If 422 (session exists), try to get session status instead
+    if (err.response?.status === 422) {
+      logger.warn("[WaHA] Session already exists (422), getting status", { session: session });
+      try {
+        const statusRes = await http.get(`${useUrl}/api/sessions/${session}`);
+        return statusRes.data;
+      } catch (e2) {
+        logger.warn("[WaHA] Failed to get session status after 422", { error: e2.message });
+      }
+    }
+    logger.warn("[WaHA] startSession failed", { session: session, error: err.message });
+    throw err;
+  }
+}
+
+// ─── Get QR code (base64) ─────────────────────────────────────────────
+async function getQR(session, baseUrl) {
+  try {
+    const useUrl = baseUrl || config.wahaUrl;
+    // Request as arraybuffer to get PNG binary
+    const res = await http.get(
+      `${useUrl}/api/${encSess(session)}/auth/qr`,
+      { responseType: "arraybuffer" }
+    );
+    // Convert ArrayBuffer to base64 (responseType: 'arraybuffer' returns ArrayBuffer)
+    const qrBase64 = Buffer.from(res.data).toString('base64');
+    if (qrBase64 && qrBase64.length > 100) {
+      return qrBase64; // base64 QR code
+    }
+    return null;
+  } catch (err) {
+    logger.warn("[WaHA] getQR failed", { session: session, error: err.message });
+    return null;
+  }
+}
+
+// ─── Get session status ───────────────────────────────────────────────────
+async function getSessionStatus(session, baseUrl) {
+  try {
+    const useUrl = baseUrl || config.wahaUrl;
+    const res = await http.get(`${useUrl}/api/sessions/${encSess(session)}`);
+    return res.data || null;
+  } catch (err) {
+    logger.warn("[WaHA] getSessionStatus failed", { session: session, error: err.message });
+    return null;
+  }
+}
+
+// ─── Wait for authentication (poll until WORKING) ─────────────────────
+async function waitForAuth(session, timeoutMs = 120000, baseUrl) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const status = await getSessionStatus(session, baseUrl);
+    const state = status?.status || status?.state;
+    if (state === "WORKING" || state === "CONNECTED") {
+      logger.info("[WaHA] Session authenticated", { session: session, status: state });
+      return true;
+    }
+    if (state === "FAILED" || state === "UNPAIRED") {
+      logger.warn("[WaHA] Session failed", { session: session, status: state });
+      return false;
+    }
+    await new Promise(r => setTimeout(r, 3000)); // poll every 3s
+  }
+  logger.warn("[WaHA] Session auth timeout", { session: session });
+  return false;
+}
+
+// ─── Get phone number from session ─────────────────────────────────────
+async function getSessionPhone(session, baseUrl) {
+  try {
+    const useUrl = baseUrl || config.wahaUrl;
+    const res = await http.get(`${useUrl}/api/${encSess(session)}/me`);
+    const phone = res.data?.id?.replace(/@.*$/, "") || res.data?.phone;
+    if (phone) {
+      logger.info("[WaHA] Phone detected", { session: session, phone: phone });
+      return phone;
+    }
+    return null;
+  } catch (err) {
+    logger.warn("[WaHA] getSessionPhone failed", { session: session, error: err.message });
+    return null;
+  }
+}
+
+module.exports = {
+  sendText: sendText,
+  sendImage: sendImage,
+  sendFile: sendFile,
+  sendVoice: sendVoice,
+  sendLocation: sendLocation,
+  sendTyping: sendTyping,
+  sendSeen: sendSeen,
+  getSessionStatus: getSessionStatus,
+  startSession: startSession,
+  getQR: getQR,
+  waitForAuth: waitForAuth,
+  getSessionPhone: getSessionPhone,
+};

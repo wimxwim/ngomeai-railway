@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat History — NgomeAI Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/css/style.css">
+  <style>
+    .badge-sent     { background:#d1fae5;color:#065f46;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600 }
+    .badge-listen   { background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600 }
+    .badge-pending  { background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600 }
+    .badge-rejected { background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600 }
+    .badge-out      { background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600 }
+    .badge-group    { background:#fce7f3;color:#9d174d;padding:2px 6px;border-radius:9999px;font-size:10px;font-weight:600 }
+    .badge-personal { background:#e0f2fe;color:#0369a1;padding:2px 6px;border-radius:9999px;font-size:10px;font-weight:600 }
+    .row-incoming   { background:#f0fdf4 !important } /* Light green for incoming */
+    .row-outgoing   { background:#fef2f2 !important } /* Light red for outgoing */
+    .num-badge-from { background:#dcfce7;color:#15803d;padding:3px 6px;border-radius:4px;font-size:10px;font-weight:600;display:inline-block;margin-right:4px }
+    .num-badge-to   { background:#fecaca;color:#991b1b;padding:3px 6px;border-radius:4px;font-size:10px;font-weight:600;display:inline-block;margin-right:4px }
+    .action-btn { padding:3px 10px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;border:none }
+    .btn-approve { background:#059669;color:#fff }
+    .btn-reject  { background:#dc2626;color:#fff }
+    .btn-edit    { background:#6366f1;color:#fff }
+    .counter-bar { display:flex;gap:10px;margin-bottom:12px;font-size:13px;flex-wrap:wrap }
+    .counter-item { background:#f3f4f6;border-radius:8px;padding:6px 14px }
+    .counter-item b { font-size:18px }
+    #editModal { display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;align-items:center;justify-content:center }
+    #editModal.open { display:flex }
+    .modal-box { background:#fff;border-radius:12px;padding:24px;width:520px;max-width:95vw }
+    .modal-box textarea { width:100%;height:120px;border:1px solid #d1d5db;border-radius:8px;padding:8px;font-size:13px;resize:vertical }
+    .media-thumb { max-width:80px;max-height:60px;border-radius:6px;cursor:pointer;border:1px solid #e5e7eb;object-fit:cover }
+    .media-icon  { font-size:22px;cursor:default }
+    .msg-cell    { max-width:180px;font-size:12px }
+    .msg-text    { overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+    .lightbox    { display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;align-items:center;justify-content:center }
+    .lightbox.open { display:flex }
+    .lightbox img { max-width:90vw;max-height:90vh;border-radius:8px }
+  </style>
+</head>
+<body>
+<script src="/admin/js/auth.js"></script>
+<script src="/admin/js/api.js"></script>
+<script src="/admin/js/app.js"></script>
+<script>
+auth.requireAuth();
+
+let rows = [], offset = 0, currentClient = '', autoRefreshTimer = null;
+const LIMIT = 50;
+let editRow = null;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function statusBadge(r) {
+  if (r.is_deleted) return '<span class="badge-rejected">🗑 DITARIK</span>';
+  if (r.direction === 'out') return '<span class="badge-out">📤 KELUAR</span>';
+  if (r.requires_approval && r.approved === null) return '<span class="badge-pending">⏳ PENDING</span>';
+  if (r.approved === false)  return '<span class="badge-rejected">🚫 REJECTED</span>';
+  if (r.is_sent === true)    return '<span class="badge-sent">✅ SENT</span>';
+  // Message masuk tapi belum dikirim balasan (either awaiting processing or needs approval)
+  if (r.direction === 'in' && !r.is_sent) return '<span class="badge-pending">⏳ NOT SENT</span>';
+  return '<span class="badge-listen">👂 RECEIVED</span>';
+}
+
+function channelBadge(r) {
+  if (r.is_group) return '<span class="badge-group">👥 Grup</span>';
+  return '<span class="badge-personal">👤 Personal</span>';
+}
+
+function mediaPreview(r) {
+  if (!r.media_url) return '';
+  const type = (r.media_type || '').toLowerCase();
+  if (type === 'image' || r.media_url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i)) {
+    return `<img src="${esc(r.media_url)}" class="media-thumb" onclick="openLightbox('${esc(r.media_url)}')" title="Klik untuk perbesar" onerror="this.style.display='none'">`;
+  }
+  if (type === 'video') return `<span class="media-icon" title="${esc(r.media_url)}">🎥</span>`;
+  if (type === 'audio') return `<span class="media-icon" title="${esc(r.media_url)}">🎵</span>`;
+  if (type === 'document') return `<a href="${esc(r.media_url)}" target="_blank" class="media-icon" title="Buka dokumen">📄</a>`;
+  if (type === 'sticker') return `<span class="media-icon" title="${esc(r.media_url)}">🎭</span>`;
+  return `<a href="${esc(r.media_url)}" target="_blank" class="media-icon" title="${esc(r.media_url)}">📎</a>`;
+}
+
+function openLightbox(url) {
+  document.getElementById('lightboxImg').src = url;
+  document.getElementById('lightbox').classList.add('open');
+}
+
+async function init() {
+  renderLayout('Chat History', `
+    <div class="flex gap-3 items-center mb-3" style="flex-wrap:wrap">
+      <select id="clientSelect" onchange="onClientChange()" style="max-width:280px">
+        <option value="">— Pilih Klien —</option>
+      </select>
+      <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="pendingOnly" onchange="onClientChange()"> Pending saja
+      </label>
+      <span id="refreshDot" style="font-size:12px;color:#6b7280">⏸ Auto-refresh off</span>
+    </div>
+    <div class="counter-bar" id="counterBar"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>📞 Pengirim/Penerima</th><th>💬 Pesan / Media</th><th>🤖 AI Reply</th><th>✓ Status</th><th>👥 Channel</th><th>🕐 Waktu</th><th>⚙️ Aksi</th>
+        </tr></thead>
+        <tbody id="tbody"><tr><td colspan="7" class="text-center py-8 text-muted">Pilih klien terlebih dahulu</td></tr></tbody>
+      </table>
+    </div>
+    <div class="flex gap-3 mt-4 justify-center items-center" id="pagination"></div>
+  `);
+
+  // Edit modal
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="editModal">
+      <div class="modal-box">
+        <h3 style="font-weight:600;margin-bottom:12px">✏️ Edit & Kirim</h3>
+        <p style="font-size:12px;color:#6b7280;margin-bottom:6px">Edit balasan AI sebelum dikirim:</p>
+        <textarea id="editText"></textarea>
+        <div class="flex gap-3 mt-4 justify-end">
+          <button onclick="closeEdit()" class="btn btn-ghost btn-sm">Batal</button>
+          <button onclick="submitEdit()" class="btn btn-sm" style="background:#6366f1;color:#fff">Kirim</button>
+        </div>
+      </div>
+    </div>
+    <div id="lightbox" onclick="this.classList.remove('open')">
+      <img id="lightboxImg" src="" alt="media">
+    </div>
+  `);
+
+  const res = await api.clients.list();
+  const sel = document.getElementById('clientSelect');
+  (res?.data || []).forEach(c => sel.innerHTML += `<option value="${esc(c.id)}">${esc(c.nama)}</option>`);
+}
+
+async function onClientChange() {
+  offset = 0;
+  currentClient = document.getElementById('clientSelect').value;
+  if (!currentClient) return;
+  await loadHistory();
+  startAutoRefresh();
+}
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(silentRefresh, 3000);
+  document.getElementById('refreshDot').textContent = '🔄 Auto-refresh 3s';
+}
+
+async function silentRefresh() {
+  if (!currentClient) return;
+  const pendingOnly = document.getElementById('pendingOnly')?.checked;
+  const res = pendingOnly
+    ? await api.historyPending({ klien_id: currentClient, limit: LIMIT }).catch(() => null)
+    : await api.history({ klien_id: currentClient, limit: LIMIT, offset }).catch(() => null);
+  if (!res?.data) return;
+  rows = res.data;
+  renderTable();
+  renderCounters();
+}
+
+async function loadHistory() {
+  const pendingOnly = document.getElementById('pendingOnly')?.checked;
+  const res = pendingOnly
+    ? await api.historyPending({ klien_id: currentClient, limit: LIMIT })
+    : await api.history({ klien_id: currentClient, limit: LIMIT, offset });
+  rows = res?.data || [];
+  renderTable();
+  renderCounters();
+  renderPagination();
+}
+
+function renderCounters() {
+  const pending  = rows.filter(r => r.requires_approval && r.approved === null).length;
+  const sent     = rows.filter(r => r.is_sent && r.direction !== 'out').length;
+  const listen   = rows.filter(r => !r.is_sent && !r.requires_approval && r.approved !== false && r.direction !== 'out').length;
+  const outgoing = rows.filter(r => r.direction === 'out').length;
+  const groups   = rows.filter(r => r.is_group).length;
+  document.getElementById('counterBar').innerHTML =
+    `<div class="counter-item">⏳ Pending <b>${pending}</b></div>` +
+    `<div class="counter-item">✅ Sent <b>${sent}</b></div>` +
+    `<div class="counter-item">👂 Listen <b>${listen}</b></div>` +
+    `<div class="counter-item">📤 Keluar <b>${outgoing}</b></div>` +
+    `<div class="counter-item">👥 Grup <b>${groups}</b></div>`;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-muted">Tidak ada data</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const isPending = r.requires_approval && r.approved === null;
+    const aiReply   = r.ai_generated_reply || r.bot_answer || '—';
+    const media     = mediaPreview(r);
+    const msgText   = r.user_message || '';
+    const rowClass  = r.direction === 'in' ? 'row-incoming' : 'row-outgoing';
+
+    // Parse phone number - check if it's a group ID
+    const isGroupId = r.user_phone && /^120363\d{10,}/.test(r.user_phone);
+    const displayPhone = isGroupId ? '(GROUP)' : esc(r.user_phone);
+    const directionArrow = r.direction === 'in' ? '⬅️' : '➡️';
+    const directionLabel = r.direction === 'in' ? 'FROM (Masuk)' : 'TO (Keluar)';
+
+    const senderInfo = r.direction === 'in'
+      ? `<span class="num-badge-from">${directionArrow} ${directionLabel}</span><div style="margin-top:4px">${r.sender_name ? `<strong>${esc(r.sender_name)}</strong><br/>` : ''}${displayPhone}</div>`
+      : `<span class="num-badge-to">${directionArrow} ${directionLabel}</span><div style="margin-top:4px">${displayPhone}</div>`;
+
+    const actions   = isPending
+      ? `<button class="action-btn btn-approve" onclick="doApprove(${r.id})">✅</button>
+         <button class="action-btn btn-reject"  onclick="doReject(${r.id})" style="margin-left:4px">🚫</button>
+         <button class="action-btn btn-edit"    onclick="openEdit(${r.id})" style="margin-left:4px">✏️</button>`
+      : '—';
+    return `<tr class="${rowClass}">
+      <td class="font-mono" style="font-size:12px;line-height:1.5">${senderInfo}</td>
+      <td class="msg-cell">
+        ${media ? `<div style="margin-bottom:4px">${media}</div>` : ''}
+        <div class="msg-text" title="${esc(msgText)}">${r.is_deleted && r.original_message
+          ? `<span style="color:#9ca3af;text-decoration:line-through">${esc(r.original_message)}</span> <span style="font-size:10px;color:#ef4444">ditarik</span>`
+          : esc(msgText)}</div>
+      </td>
+      <td class="msg-cell"><div class="msg-text" title="${esc(aiReply)}" style="color:#374151">${esc(aiReply)}</div></td>
+      <td>${statusBadge(r)}</td>
+      <td>${channelBadge(r)}</td>
+      <td class="text-muted" style="font-size:11px;white-space:nowrap">${new Date(r.created_at).toLocaleString('id-ID')}</td>
+      <td style="white-space:nowrap">${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPagination() {
+  const pendingOnly = document.getElementById('pendingOnly')?.checked;
+  if (pendingOnly) { document.getElementById('pagination').innerHTML = ''; return; }
+  document.getElementById('pagination').innerHTML = `
+    <button onclick="prevPage()" class="btn btn-ghost btn-sm" ${offset===0?'disabled style="opacity:0.4"':''}>← Sebelumnya</button>
+    <span class="text-muted text-sm">Baris ${offset+1}–${offset+rows.length}</span>
+    <button onclick="nextPage()" class="btn btn-ghost btn-sm" ${rows.length<LIMIT?'disabled style="opacity:0.4"':''}>Berikutnya →</button>
+  `;
+}
+
+async function doApprove(id) {
+  if (!confirm(`Approve #${id} dan kirim ke WhatsApp?`)) return;
+  const res = await api.historyApprove({ id, klien_id: currentClient });
+  if (res?.success) await loadHistory();
+  else alert('Gagal: ' + (res?.error || 'unknown'));
+}
+
+async function doReject(id) {
+  if (!confirm(`Tolak #${id}?`)) return;
+  const res = await api.historyReject({ id, klien_id: currentClient });
+  if (res?.success) await loadHistory();
+  else alert('Gagal: ' + (res?.error || 'unknown'));
+}
+
+function openEdit(id) {
+  editRow = rows.find(r => r.id === id);
+  if (!editRow) return;
+  document.getElementById('editText').value = editRow.ai_generated_reply || editRow.bot_answer || '';
+  document.getElementById('editModal').classList.add('open');
+}
+
+function closeEdit() {
+  editRow = null;
+  document.getElementById('editModal').classList.remove('open');
+}
+
+async function submitEdit() {
+  if (!editRow) return;
+  const newText = document.getElementById('editText').value.trim();
+  if (!newText) return alert('Balasan tidak boleh kosong');
+  const patchRes = await api.historyEdit({ id: editRow.id, klien_id: currentClient, ai_generated_reply: newText });
+  if (!patchRes?.success) { alert('Gagal update: ' + (patchRes?.error || 'unknown')); return; }
+  const approveRes = await api.historyApprove({ id: editRow.id, klien_id: currentClient });
+  if (approveRes?.success) { closeEdit(); await loadHistory(); }
+  else alert('Gagal approve: ' + (approveRes?.error || 'unknown'));
+}
+
+async function prevPage() { offset = Math.max(0, offset - LIMIT); await loadHistory(); }
+async function nextPage() { offset += LIMIT; await loadHistory(); }
+
+init();
+</script>
+</body>
+</html>

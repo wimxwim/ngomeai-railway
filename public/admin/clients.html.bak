@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Klien — NgomeAI Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/css/style.css">
+  <style>
+    .toggle-row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+    .toggle-label { font-size:12px; color:#6b7280; min-width:110px; }
+    .toggle { position:relative; display:inline-block; width:36px; height:20px; }
+    .toggle input { opacity:0; width:0; height:0; }
+    .slider { position:absolute; cursor:pointer; inset:0; background:#d1d5db; border-radius:20px; transition:.2s; }
+    .slider:before { content:""; position:absolute; width:14px; height:14px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.2s; }
+    input:checked + .slider { background:#16a34a; }
+    input:checked + .slider:before { transform:translateX(16px); }
+    .mode-cell { display:flex; flex-direction:column; gap:2px; }
+    .mode-badge { font-size:11px; padding:2px 6px; border-radius:9999px; font-weight:600; display:inline-block; }
+    .mode-reply  { background:#dcfce7; color:#16a34a; }
+    .mode-listen { background:#fef9c3; color:#ca8a04; }
+  </style>
+</head>
+<body>
+<script src="/admin/js/auth.js"></script>
+<script src="/admin/js/api.js"></script>
+<script src="/admin/js/app.js"></script>
+<script>
+auth.requireAuth();
+let clients = [];
+
+async function load() {
+  const res = await api.clients.list();
+  clients = res?.data || [];
+  renderTable();
+}
+
+function providerBadge(p) {
+  const map = { meta: '#7c3aed', gowa: '#ea580c', waha: '#0891b2', evolution: '#16a34a' };
+  const color = map[p] || '#6b7280';
+  return `<span style="background:${color}15;color:${color};padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600">${p.toUpperCase()}</span>`;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  if (!clients.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-muted">Belum ada klien — klik "+ Tambah" untuk mulai</td></tr>';
+    return;
+  }
+  tbody.innerHTML = clients.map(c => {
+    const waInfo = c.provider === 'gowa' ? (c.gowa_device_id || c.phone_number_id || '—') : (c.phone_number_id || '—');
+    const limit = c.msg_limit >= 999999 ? '∞' : c.msg_limit;
+    const replyOn   = c.reply_mode !== false;
+    const listenPC  = c.listen_personal === true;
+    const listenGrp = c.listen_group !== false;
+    return `<tr>
+      <td style="font-weight:600;color:#1a1d23">${esc(c.nama)}<br><span class="text-muted" style="font-size:11px;font-weight:400">${esc(c.id)}</span></td>
+      <td>${providerBadge(c.provider)}</td>
+      <td class="font-mono" style="font-size:12px">${esc(waInfo)}</td>
+      <td style="text-align:center">${limit}</td>
+      <td>
+        <div class="mode-cell">
+          <div class="toggle-row">
+            <span class="toggle-label">💬 Balas AI</span>
+            <label class="toggle">
+              <input type="checkbox" ${replyOn ? 'checked' : ''} onchange="setMode('${esc(c.id)}','reply',this.checked)">
+              <span class="slider"></span>
+            </label>
+            <span class="mode-badge ${replyOn ? 'mode-reply' : 'mode-listen'}">${replyOn ? 'ON' : 'OFF'}</span>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">👤 Listen PC</span>
+            <label class="toggle">
+              <input type="checkbox" ${listenPC ? 'checked' : ''} onchange="setMode('${esc(c.id)}','listen_personal',this.checked)">
+              <span class="slider"></span>
+            </label>
+            <span class="mode-badge ${listenPC ? 'mode-listen' : 'mode-reply'}">${listenPC ? 'Listen' : 'Reply'}</span>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">👥 Listen Grup</span>
+            <label class="toggle">
+              <input type="checkbox" ${listenGrp ? 'checked' : ''} onchange="setMode('${esc(c.id)}','listen_group',this.checked)">
+              <span class="slider"></span>
+            </label>
+            <span class="mode-badge ${listenGrp ? 'mode-listen' : 'mode-reply'}">${listenGrp ? 'Listen' : 'Reply'}</span>
+          </div>
+        </div>
+      </td>
+      <td><span class="badge ${c.aktif ? 'badge-green' : 'badge-red'}">${c.aktif ? 'Aktif' : 'Nonaktif'}</span></td>
+      <td>
+        <div class="flex gap-2" style="flex-wrap:wrap">
+          ${c.provider === 'waha' || c.provider === 'gowa' || c.provider === 'evolution' ? `<button onclick="doQr('${esc(c.id)}')" class="btn btn-ghost btn-sm">📱 QR</button>` : ''}
+          <button onclick="editClient('${esc(c.id)}')" class="btn btn-ghost btn-sm">✏️ Edit</button>
+          <button onclick="toggleClient('${esc(c.id)}',${c.aktif})" class="btn btn-ghost btn-sm">${c.aktif ? '⏸ Nonaktif' : '▶ Aktif'}</button>
+          <button onclick="deleteClient('${esc(c.id)}')" class="btn btn-danger btn-sm">🗑 Hapus</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Toggle mode (reply / listen_personal / listen_group) ─────────────────
+async function setMode(id, type, val) {
+  let res;
+  if (type === 'reply') {
+    res = await api.post('/api/admin/clients/mode', { id, reply_mode: val });
+  } else {
+    const body = { id };
+    if (type === 'listen_personal') body.listen_personal = val;
+    if (type === 'listen_group')    body.listen_group    = val;
+    res = await api.post('/api/admin/clients/listen', body);
+  }
+  if (res?.success) {
+    const c = clients.find(x => x.id === id);
+    if (c) {
+      if (type === 'reply')            c.reply_mode       = val;
+      if (type === 'listen_personal')  c.listen_personal  = val;
+      if (type === 'listen_group')     c.listen_group     = val;
+    }
+    renderTable();
+    toast(val ? '✅ Diaktifkan' : '⏸ Dinonaktifkan');
+  } else {
+    toast(res?.error || 'Gagal', 'error');
+    load(); // reload untuk reset toggle ke state sebenarnya
+  }
+}
+
+// ── QR ────────────────────────────────────────────────────────────────────
+async function doQr(id) {
+  const c = clients.find(x => x.id === id);
+  if (!c) return;
+  const res = await api.post('/api/admin/wa/qr', { client_id: id });
+  if (!res?.success) { toast(res?.error || 'Gagal ambil QR', 'error'); return; }
+  if (res.data?.status === 'WORKING') { toast('✅ WhatsApp sudah terhubung!'); return; }
+  if (res.data?.qr) showQrModal(res.data.qr, c.nama);
+  else toast('QR belum tersedia, coba lagi', 'error');
+}
+
+function showQrModal(qrDataUrl, nama) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:320px;text-align:center">
+      <div class="modal-header">
+        <h3 class="modal-title">📱 Scan QR — ${esc(nama)}</h3>
+        <button onclick="this.closest('.modal-overlay').remove()" class="modal-close">✕</button>
+      </div>
+      <img src="${qrDataUrl}" style="width:260px;height:260px;border-radius:8px;margin:12px auto;display:block">
+      <p class="text-sm text-muted">Buka WhatsApp → Perangkat Tertaut → Tautkan Perangkat</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── Tambah Klien ──────────────────────────────────────────────────────────
+function createClient() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:460px">
+      <div class="modal-header">
+        <h3 class="modal-title">➕ Tambah Klien</h3>
+        <button id="closeCreate" class="modal-close">✕</button>
+      </div>
+      <form id="createForm" style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+        <div class="form-group">
+          <label class="form-label">Nama Bisnis *</label>
+          <input name="nama" class="form-input" placeholder="Toko Kopi Pak Budi" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">ID Klien *</label>
+          <input name="id" class="form-input" placeholder="toko-kopi-budi" required>
+          <p class="text-sm text-muted" style="margin-top:3px">Huruf kecil, angka, tanda hubung</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Provider WhatsApp</label>
+          <select name="provider" id="providerSel" class="form-input">
+            <option value="meta">Meta Cloud API</option>
+            <option value="gowa">GoWA — Go binary</option>
+            <option value="waha">WaHA — Node.js Docker</option>
+            <option value="evolution">Evolution API — multi-instance</option>
+          </select>
+        </div>
+        <div id="metaGroup" class="form-group" style="display:none">
+          <label class="form-label">Phone Number ID *</label>
+          <input name="phone_number_id" class="form-input" placeholder="ID dari Meta Business">
+          <label class="form-label" style="margin-top:8px">Meta Token *</label>
+          <input name="meta_token" class="form-input" placeholder="EAAxxxxx...">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Limit AI/hari</label>
+          <input name="msg_limit" class="form-input" type="number" placeholder="Kosong = tidak terbatas">
+        </div>
+        <div class="form-group">
+          <label class="form-label">System Prompt AI</label>
+          <textarea name="system_prompt" class="form-input" rows="3"
+            placeholder="Kamu adalah CS Toko Kopi Pak Budi. Jawab ramah dan singkat."></textarea>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+          <button type="button" id="cancelCreate" class="btn btn-ghost">Batal</button>
+          <button type="submit" class="btn btn-primary">Simpan</button>
+        </div>
+      </form>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const provSel = overlay.querySelector('#providerSel');
+  function syncProvider() {
+    overlay.querySelector('#metaGroup').style.display = provSel.value === 'meta' ? '' : 'none';
+  }
+  provSel.addEventListener('change', syncProvider);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#closeCreate').onclick = close;
+  overlay.querySelector('#cancelCreate').onclick = close;
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('#createForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const d  = Object.fromEntries(fd.entries());
+    if (!d.msg_limit || d.msg_limit === '') d.msg_limit = 999999;
+    else d.msg_limit = Number(d.msg_limit);
+    if (d.provider === 'waha') { d.waha_session = 'default'; d.phone_number_id = d.id; d.meta_token = ''; }
+    if (d.provider === 'gowa') { d.phone_number_id = d.gowa_device_id || d.id; d.meta_token = ''; }
+    if (d.provider === 'evolution') { d.evolution_instance = d.id; d.phone_number_id = d.id; d.meta_token = ''; }
+    if (!d.system_prompt) delete d.system_prompt;
+    if (!d.gowa_device_id) delete d.gowa_device_id;
+    const res = await api.clients.create(d);
+    if (!res?.success) { toast(res?.error || 'Gagal', 'error'); return; }
+    close();
+    toast(`✅ Klien "${d.nama}" berhasil ditambahkan!`);
+    await load();
+    if (d.provider === 'waha' || d.provider === 'gowa' || d.provider === 'evolution') setTimeout(() => doQr(d.id), 500);
+  };
+}
+
+// ── Edit ──────────────────────────────────────────────────────────────────
+function editClient(id) {
+  const c = clients.find(x => x.id === id);
+  showModal({
+    title: `✏️ Edit — ${c.nama}`,
+    fields: [
+      { name: 'nama',          label: 'Nama Bisnis',    value: c.nama,          required: true },
+      { name: 'msg_limit',     label: 'Limit AI/hari (kosong = ∞)', value: c.msg_limit >= 999999 ? '' : c.msg_limit, type: 'number', placeholder: 'Kosong = tidak terbatas' },
+      { name: 'system_prompt', label: 'System Prompt AI', type: 'textarea', value: c.system_prompt || '',
+        placeholder: 'Kamu adalah CS bisnis ini. Jawab ramah dan singkat.' },
+    ],
+    onSubmit: async (d) => {
+      if (!d.msg_limit || d.msg_limit === '') d.msg_limit = 999999;
+      else d.msg_limit = Number(d.msg_limit);
+      const res = await api.clients.update({ id, ...d });
+      if (res?.success) { toast('Klien diperbarui'); load(); }
+      else toast(res?.error || 'Gagal', 'error');
+    }
+  });
+}
+
+async function toggleClient(id, aktif) {
+  const res = await api.clients.toggle(id, !aktif);
+  if (res?.success) { toast(`Klien ${!aktif ? 'diaktifkan' : 'dinonaktifkan'}`); load(); }
+  else toast(res?.error || 'Gagal', 'error');
+}
+
+function deleteClient(id) {
+  const c = clients.find(x => x.id === id);
+  confirmDelete(`Hapus klien <strong>${esc(c?.nama || id)}</strong>?`, async () => {
+    const res = await api.clients.delete(id);
+    if (res?.success) { toast('Klien dihapus'); load(); }
+    else toast(res?.error || 'Gagal', 'error');
+  });
+}
+
+renderLayout('Klien', `
+  <div class="flex justify-between items-center mb-4">
+    <p class="text-sm text-muted">Kelola semua klien WhatsApp</p>
+    <button onclick="createClient()" class="btn btn-primary">+ Tambah Klien</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Nama / ID</th><th>Provider</th><th>Session / Device</th><th>Limit</th>
+        <th>Mode Channel</th><th>Status</th><th>Aksi</th>
+      </tr></thead>
+      <tbody id="tbody"><tr><td colspan="7" class="text-center py-8 text-muted">Memuat...</td></tr></tbody>
+    </table>
+  </div>
+`);
+load();
+</script>
+</body>
+</html>

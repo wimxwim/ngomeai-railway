@@ -1,0 +1,59 @@
+{
+  "name": "codeengine-node-postgres",
+  "version": "2.6.1",
+  "description": "NgomeAI WhatsApp chatbot — GoWA + WaHA + Meta providers",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:init": "node src/scripts/init-db.js",
+    "db:migrate:001": "psql \"$DATABASE_URL\" -f sql/migration_001_add_processed_messages.sql",
+    "db:migrate:002": "psql \"$DATABASE_URL\" -f sql/migration_002_provider_system_prompt.sql",
+    "db:migrate:003": "psql \"$DATABASE_URL\" -f sql/migration_003_audit_log.sql",
+    "db:migrate:004": "psql \"$DATABASE_URL\" -f sql/migration_004_gowa_provider.sql",
+    "db:migrate:005": "psql \"$DATABASE_URL\" -f sql/migration_005_conversations_state.sql",
+    "db:migrate:006": "psql \"$DATABASE_URL\" -f sql/migration_006_waha_provider.sql",
+    "db:migrate:007": "psql \"$DATABASE_URL\" -f sql/migration_007_reply_mode.sql",
+    "db:migrate:008": "psql \"$DATABASE_URL\" -f sql/migration_008_chat_history_fields.sql",
+    "db:migrate:009": "psql \"$DATABASE_URL\" -f sql/migration_009_approval_workflow.sql",
+    "db:migrate:010": "psql \"$DATABASE_URL\" -f sql/migration_010_direction.sql",
+    "db:migrate:011": "psql \"$DATABASE_URL\" -f sql/migration_011_listen_modes.sql",
+    "db:migrate:012": "psql \"$DATABASE_URL\" -f sql/migration_012_add_waha_url.sql",
+    "db:migrate:013": "psql \"$DATABASE_URL\" -f sql/migration_013_enable_pgtrgm.sql",
+    "db:migrate:014": "psql \"$DATABASE_URL\" -f sql/migration_014_health_status.sql",
+    "db:migrate:015": "psql \"$DATABASE_URL\" -f sql/migration_015_follow_ups.sql",
+    "db:migrate:021": "psql \"$DATABASE_URL\" -f sql/migration_021_baileys_provider.sql",
+    "db:migrate": "npm run db:migrate:001 && npm run db:migrate:002 && npm run db:migrate:003 && npm run db:migrate:004 && npm run db:migrate:005 && npm run db:migrate:006 && npm run db:migrate:007 && npm run db:migrate:008 && npm run db:migrate:009 && npm run db:migrate:010 && npm run db:migrate:011 && npm run db:migrate:012 && npm run db:migrate:013 && npm run db:migrate:014 && npm run db:migrate:015 && npm run db:migrate:021",
+    "db:seed": "node src/scripts/seed-demo.js",
+    "test": "node --test tests/dedup.test.js tests/quota.test.js tests/webhook.test.js",
+    "logs": "pm2 logs chatbot",
+    "monitor": "pm2 monit",
+    "deploy": "pm2 restart chatbot"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc10",
+    "axios": "^1.8.2",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "form-data": "^4.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.3",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
+    "redis": "^5.12.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "overrides": {
+    "protobufjs": ">=7.5.5"
+  }
+}
