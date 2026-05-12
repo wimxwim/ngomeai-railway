@@ -37,6 +37,28 @@ process.on("uncaughtException", (err) => {
 
 // ─── Startup ───────────────────────────────────────────────────────────────
 
+async function runMigrationsIfNeeded() {
+  const fs = require("fs");
+  const path = require("path");
+
+  const sqlDir = path.resolve(__dirname, "../sql");
+  const files = fs.readdirSync(sqlDir)
+    .filter(f => f.startsWith("migration_") && f.endsWith(".sql"))
+    .sort();
+
+  for (const file of files) {
+    const filePath = path.join(sqlDir, file);
+    const sql = fs.readFileSync(filePath, "utf8");
+    try {
+      await pool.query(sql);
+    } catch (error) {
+      if (!error.message.includes("already exists")) {
+        logger.warn(`Migration ${file} warning: ${error.message}`);
+      }
+    }
+  }
+}
+
 async function start() {
   if (INSECURE_DEFAULTS.includes(config.metaAppSecret)) {
     logger.error(
@@ -58,6 +80,10 @@ async function start() {
   try {
     await pool.query("SELECT 1");
     logger.info("Database connection verified");
+
+    console.log("=== STARTUP: Running migrations ===");
+    await runMigrationsIfNeeded();
+    console.log("=== STARTUP: Migrations complete ===");
 
     const server = app.listen(config.port, () => {
       logger.info("Server started", { port: config.port, env: config.nodeEnv });
